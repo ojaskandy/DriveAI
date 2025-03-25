@@ -11,10 +11,28 @@ app = Flask(__name__)
 
 class TrafficLightDetector:
     def __init__(self):
-        # Load YOLO model
-        model_path = Path("src/models/best_traffic_small_yolo.pt")
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model file not found at {model_path}")
+        # Try different possible model paths
+        possible_paths = [
+            Path("src/models/best_traffic_small_yolo.pt"),  # When running from root
+            Path("models/best_traffic_small_yolo.pt"),      # When running from src
+            Path(os.path.join(os.path.dirname(__file__), "models/best_traffic_small_yolo.pt"))  # Relative to this file
+        ]
+        
+        model_path = None
+        for path in possible_paths:
+            if path.exists():
+                model_path = path
+                break
+        
+        if model_path is None:
+            error_msg = (
+                f"Model file 'best_traffic_small_yolo.pt' not found. Tried paths:\n"
+                f"{chr(10).join(str(p) for p in possible_paths)}\n"
+                f"Current working directory: {os.getcwd()}"
+            )
+            raise FileNotFoundError(error_msg)
+            
+        print(f"Loading model from: {model_path}")
         self.model = YOLO(str(model_path))
 
     def get_color_for_class(self, class_name):
@@ -119,6 +137,7 @@ def process_frame():
         
         return jsonify({'image': processed_image})
     except Exception as e:
+        print(f"Error processing frame: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':

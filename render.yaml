@@ -2,10 +2,15 @@ services:
   - type: web
     name: traffic-light-detector
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --chdir src wsgi:app
+    buildCommand: |
+      pip install -r requirements.txt
+      mkdir -p src/models
+      cp models/best_traffic_small_yolo.pt src/models/
+    startCommand: gunicorn --chdir src wsgi:app --log-level debug
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
+      - key: PYTHONUNBUFFERED
+        value: "true"
       - key: CAMERA_INDEX
         value: 0 
