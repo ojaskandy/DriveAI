@@ -6,8 +6,11 @@ from ultralytics import YOLO
 import base64
 import os
 import re
+from PIL import Image
+import io
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max-size
 
 class TrafficLightDetector:
     def __init__(self):
@@ -46,56 +49,67 @@ class TrafficLightDetector:
         return color_map.get(class_name, (0, 255, 0))
 
     def process_frame(self, frame):
-        # Run YOLO detection
-        results = self.model(frame, conf=0.25)
-        
-        # Create a copy of the frame for visualization
-        processed_frame = frame.copy()
-        
-        # Process results
-        if results and len(results) > 0:
-            boxes = results[0].boxes
-            for box in boxes:
-                # Get box coordinates
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                
-                # Get class and confidence
-                cls = int(box.cls[0])
-                conf = float(box.conf[0])
-                class_name = results[0].names[cls].lower()
-                
-                # Get color based on class
-                color = self.get_color_for_class(class_name)
-                
-                # Draw thicker bounding box
-                cv2.rectangle(processed_frame, (x1, y1), (x2, y2), color, 4)
-                
-                # Create more visible label background
-                label = f"{class_name.upper()}: {conf:.2f}"
-                (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 1.0, 2)
-                cv2.rectangle(processed_frame, (x1, y1 - label_h - 10), (x1 + label_w + 10, y1), color, -1)
-                
-                # Add larger label with confidence
-                cv2.putText(processed_frame, label, (x1 + 5, y1 - 5),
-                          cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 2)
-                
-                # Draw attention-grabbing corner markers
-                marker_length = 20
-                thickness = 4
-                # Top-left
-                cv2.line(processed_frame, (x1, y1), (x1 + marker_length, y1), color, thickness)
-                cv2.line(processed_frame, (x1, y1), (x1, y1 + marker_length), color, thickness)
-                # Top-right
-                cv2.line(processed_frame, (x2, y1), (x2 - marker_length, y1), color, thickness)
-                cv2.line(processed_frame, (x2, y1), (x2, y1 + marker_length), color, thickness)
-                # Bottom-left
-                cv2.line(processed_frame, (x1, y2), (x1 + marker_length, y2), color, thickness)
-                cv2.line(processed_frame, (x1, y2), (x1, y2 - marker_length), color, thickness)
-                # Bottom-right
-                cv2.line(processed_frame, (x2, y2), (x2 - marker_length, y2), color, thickness)
-                cv2.line(processed_frame, (x2, y2), (x2, y2 - marker_length), color, thickness)
-        
-        return processed_frame
+        try:
+            # Ensure frame is not too large
+            max_size = 640
+            h, w = frame.shape[:2]
+            if h > max_size or w > max_size:
+                scale = max_size / max(h, w)
+                frame = cv2.resize(frame, None, fx=scale, fy=scale)
+
+            # Run YOLO detection
+            results = self.model(frame, conf=0.25)
+            
+            # Create a copy of the frame for visualization
+            processed_frame = frame.copy()
+            
+            # Process results
+            if results and len(results) > 0:
+                boxes = results[0].boxes
+                for box in boxes:
+                    # Get box coordinates
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    
+                    # Get class and confidence
+                    cls = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    class_name = results[0].names[cls].lower()
+                    
+                    # Get color based on class
+                    color = self.get_color_for_class(class_name)
+                    
+                    # Draw thicker bounding box
+                    cv2.rectangle(processed_frame, (x1, y1), (x2, y2), color, 4)
+                    
+                    # Create more visible label background
+                    label = f"{class_name.upper()}: {conf:.2f}"
+                    (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 1.0, 2)
+                    cv2.rectangle(processed_frame, (x1, y1 - label_h - 10), (x1 + label_w + 10, y1), color, -1)
+                    
+                    # Add larger label with confidence
+                    cv2.putText(processed_frame, label, (x1 + 5, y1 - 5),
+                              cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 2)
+                    
+                    # Draw attention-grabbing corner markers
+                    marker_length = 20
+                    thickness = 4
+                    # Top-left
+                    cv2.line(processed_frame, (x1, y1), (x1 + marker_length, y1), color, thickness)
+                    cv2.line(processed_frame, (x1, y1), (x1, y1 + marker_length), color, thickness)
+                    # Top-right
+                    cv2.line(processed_frame, (x2, y1), (x2 - marker_length, y1), color, thickness)
+                    cv2.line(processed_frame, (x2, y1), (x2, y1 + marker_length), color, thickness)
+                    # Bottom-left
+                    cv2.line(processed_frame, (x1, y2), (x1 + marker_length, y2), color, thickness)
+                    cv2.line(processed_frame, (x1, y2), (x1, y2 - marker_length), color, thickness)
+                    # Bottom-right
+                    cv2.line(processed_frame, (x2, y2), (x2 - marker_length, y2), color, thickness)
+                    cv2.line(processed_frame, (x2, y2), (x2, y2 - marker_length), color, thickness)
+            
+            return processed_frame
+        except Exception as e:
+            print(f"Error in process_frame: {str(e)}")
+            raise
 
 detector = TrafficLightDetector()
 
@@ -104,23 +118,42 @@ def index():
     return render_template('index.html')
 
 def decode_base64_image(base64_string):
-    # Extract the base64 encoded binary data from the image data URL
-    image_data = re.sub('^data:image/.+;base64,', '', base64_string)
-    # Decode base64 string
-    image_bytes = base64.b64decode(image_data)
-    # Convert to numpy array
-    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-    # Decode image
-    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-    return image
+    try:
+        # Extract the base64 encoded binary data from the image data URL
+        image_data = re.sub('^data:image/.+;base64,', '', base64_string)
+        # Decode base64 string
+        image_bytes = base64.b64decode(image_data)
+        
+        # Use PIL for initial decoding (faster than OpenCV for JPEG)
+        image = Image.open(io.BytesIO(image_bytes))
+        # Convert to RGB (PIL uses RGB by default)
+        image = image.convert('RGB')
+        # Convert to numpy array
+        image_array = np.array(image)
+        # Convert from RGB to BGR (OpenCV uses BGR)
+        image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+        return image_array
+    except Exception as e:
+        print(f"Error decoding image: {str(e)}")
+        raise
 
-def encode_frame_to_base64(frame):
-    # Encode frame as JPEG
-    _, buffer = cv2.imencode('.jpg', frame)
-    # Convert to base64 string
-    base64_string = base64.b64encode(buffer).decode('utf-8')
-    # Return as data URL
-    return f'data:image/jpeg;base64,{base64_string}'
+def encode_frame_to_base64(frame, quality=70):
+    try:
+        # Convert from BGR to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Convert to PIL Image
+        image = Image.fromarray(frame_rgb)
+        # Save to bytes with JPEG compression
+        buffer = io.BytesIO()
+        image.save(buffer, format='JPEG', quality=quality)
+        # Get the bytes and encode to base64
+        image_bytes = buffer.getvalue()
+        base64_string = base64.b64encode(image_bytes).decode('utf-8')
+        # Return as data URL
+        return f'data:image/jpeg;base64,{base64_string}'
+    except Exception as e:
+        print(f"Error encoding frame: {str(e)}")
+        raise
 
 @app.route('/process_frame', methods=['POST'])
 def process_frame():

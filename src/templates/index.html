@@ -97,6 +97,15 @@
             border-radius: 5px;
             display: none;
         }
+        .fps-counter {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -116,11 +125,13 @@
             <h2>Camera Feed</h2>
             <video id="videoElement" autoplay playsinline></video>
             <div class="loading" id="rawLoading">Initializing camera...</div>
+            <div class="fps-counter" id="rawFps">FPS: 0</div>
         </div>
         <div class="video-container">
             <h2>Processed Feed</h2>
             <canvas id="processedCanvas"></canvas>
             <div class="loading" id="processedLoading">Processing...</div>
+            <div class="fps-counter" id="processedFps">FPS: 0</div>
         </div>
     </div>
 
@@ -129,11 +140,17 @@
         const canvas = document.getElementById('processedCanvas');
         const ctx = canvas.getContext('2d');
         const permissionOverlay = document.getElementById('permissionOverlay');
-        const errorMessage = document.getElementById('error-message');
+        const errorMessage = document.getElementById('errorMessage');
         const rawLoading = document.getElementById('rawLoading');
         const processedLoading = document.getElementById('processedLoading');
+        const rawFpsCounter = document.getElementById('rawFps');
+        const processedFpsCounter = document.getElementById('processedFps');
 
-        let processingFrame = false;
+        let isProcessing = false;
+        let lastFrameTime = performance.now();
+        let lastProcessedTime = performance.now();
+        let rawFps = 0;
+        let processedFps = 0;
 
         async function requestCameraPermission() {
             try {
@@ -164,9 +181,24 @@
             }
         }
 
+        function updateFPS() {
+            const now = performance.now();
+            
+            // Update raw FPS
+            if (video.srcObject) {
+                const rawDelta = now - lastFrameTime;
+                rawFps = Math.round(1000 / rawDelta);
+                lastFrameTime = now;
+                rawFpsCounter.textContent = `FPS: ${rawFps}`;
+            }
+
+            // Request next frame
+            requestAnimationFrame(updateFPS);
+        }
+
         async function processFrame() {
-            if (!processingFrame) {
-                processingFrame = true;
+            if (!isProcessing && video.srcObject) {
+                isProcessing = true;
                 processedLoading.style.display = 'block';
 
                 try {
@@ -174,7 +206,7 @@
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                     
                     // Get the frame data
-                    const imageData = canvas.toDataURL('image/jpeg');
+                    const imageData = canvas.toDataURL('image/jpeg', 0.7); // Reduced quality for better performance
                     
                     // Send the frame to the server for processing
                     const response = await fetch('/process_frame', {
@@ -187,12 +219,23 @@
 
                     if (response.ok) {
                         const processedImageData = await response.json();
+                        
                         // Draw the processed frame
                         const img = new Image();
                         img.onload = () => {
                             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                             processedLoading.style.display = 'none';
-                            processingFrame = false;
+                            
+                            // Update processed FPS
+                            const now = performance.now();
+                            const delta = now - lastProcessedTime;
+                            processedFps = Math.round(1000 / delta);
+                            lastProcessedTime = now;
+                            processedFpsCounter.textContent = `FPS: ${processedFps}`;
+                            
+                            isProcessing = false;
+                            // Immediately request next frame
+                            requestAnimationFrame(processFrame);
                         };
                         img.src = processedImageData.image;
                     } else {
@@ -201,14 +244,21 @@
                 } catch (error) {
                     console.error('Error processing frame:', error);
                     processedLoading.style.display = 'none';
-                    processingFrame = false;
+                    isProcessing = false;
+                    // Retry after a short delay
+                    setTimeout(() => requestAnimationFrame(processFrame), 1000);
                 }
+            } else {
+                // If we're still processing, request next frame after a short delay
+                requestAnimationFrame(processFrame);
             }
         }
 
         function startProcessing() {
-            // Process frames every 100ms (10 fps)
-            setInterval(processFrame, 100);
+            // Start FPS counter
+            updateFPS();
+            // Start frame processing
+            processFrame();
         }
     </script>
 </body>
