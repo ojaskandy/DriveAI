@@ -1,10 +1,11 @@
 import cv2
 import numpy as np
 from pathlib import Path
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, request, jsonify
 from ultralytics import YOLO
 import base64
 import os
+import re
 
 app = Flask(__name__)
 
@@ -15,36 +16,6 @@ class TrafficLightDetector:
         if not model_path.exists():
             raise FileNotFoundError(f"Model file not found at {model_path}")
         self.model = YOLO(str(model_path))
-        
-        # Check if we're running on Render
-        self.is_render = os.getenv('RENDER', False)
-        if self.is_render:
-            # In production, use a test image instead of camera
-            self.test_mode = True
-            self.test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(self.test_frame, 
-                       "Camera access not available in production", 
-                       (50, 240),
-                       cv2.FONT_HERSHEY_DUPLEX, 
-                       0.8, 
-                       (255, 255, 255), 
-                       2)
-        else:
-            # Initialize camera - try different camera indices if 0 doesn't work
-            camera_index = int(os.getenv('CAMERA_INDEX', '0'))
-            self.cap = cv2.VideoCapture(camera_index)
-            if not self.cap.isOpened():
-                self.test_mode = True
-                self.test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(self.test_frame, 
-                           "No camera detected", 
-                           (50, 240),
-                           cv2.FONT_HERSHEY_DUPLEX, 
-                           1.0, 
-                           (255, 255, 255), 
-                           2)
-            else:
-                self.test_mode = False
 
     def get_color_for_class(self, class_name):
         # Define vibrant colors for each class (in BGR format)
@@ -108,56 +79,51 @@ class TrafficLightDetector:
         
         return processed_frame
 
-    def get_frame(self):
-        if self.test_mode or self.is_render:
-            frame = self.test_frame.copy()
-        else:
-            ret, frame = self.cap.read()
-            if not ret:
-                return None, None
-
-        # Process frame with YOLO
-        processed_frame = self.process_frame(frame)
-        
-        # Convert frames to JPEG
-        _, raw_jpeg = cv2.imencode('.jpg', frame)
-        _, processed_jpeg = cv2.imencode('.jpg', processed_frame)
-        
-        return raw_jpeg.tobytes(), processed_jpeg.tobytes()
-
-    def __del__(self):
-        if not self.test_mode and not self.is_render:
-            self.cap.release()
-
 detector = TrafficLightDetector()
-
-def gen_frames(raw=True):
-    while True:
-        raw_frame, processed_frame = detector.get_frame()
-        if raw_frame is None or processed_frame is None:
-            break
-            
-        frame = raw_frame if raw else processed_frame
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/video_feed_raw')
-def video_feed_raw():
-    return Response(gen_frames(raw=True),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+def decode_base64_image(base64_string):
+    # Extract the base64 encoded binary data from the image data URL
+    image_data = re.sub('^data:image/.+;base64,', '', base64_string)
+    # Decode base64 string
+    image_bytes = base64.b64decode(image_data)
+    # Convert to numpy array
+    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    # Decode image
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    return image
 
-@app.route('/video_feed_processed')
-def video_feed_processed():
-    return Response(gen_frames(raw=False),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+def encode_frame_to_base64(frame):
+    # Encode frame as JPEG
+    _, buffer = cv2.imencode('.jpg', frame)
+    # Convert to base64 string
+    base64_string = base64.b64encode(buffer).decode('utf-8')
+    # Return as data URL
+    return f'data:image/jpeg;base64,{base64_string}'
+
+@app.route('/process_frame', methods=['POST'])
+def process_frame():
+    try:
+        # Get the frame data from the request
+        data = request.get_json()
+        frame = decode_base64_image(data['image'])
+        
+        # Process the frame
+        processed_frame = detector.process_frame(frame)
+        
+        # Convert processed frame to base64
+        processed_image = encode_frame_to_base64(processed_frame)
+        
+        return jsonify({'image': processed_image})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Get port from environment variable (Render sets this)
     port = int(os.getenv('PORT', 8000))
     # In production, host should be '0.0.0.0'
-    host = '0.0.0.0' if os.getenv('RENDER') else 'localhost'
+    host = '0.0.0.0'
     app.run(host=host, port=port) 

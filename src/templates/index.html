@@ -31,13 +31,15 @@
             transition: transform 0.3s ease;
             flex: 1;
             min-width: 300px;
+            position: relative;
         }
         .video-container:hover {
             transform: scale(1.02);
         }
-        img {
+        video, canvas {
             width: 100%;
             border-radius: 5px;
+            background: #000;
         }
         .permission-overlay {
             position: fixed;
@@ -75,6 +77,26 @@
         .hidden {
             display: none;
         }
+        #error-message {
+            color: #ff4444;
+            text-align: center;
+            margin: 20px 0;
+            padding: 10px;
+            border-radius: 5px;
+            background: rgba(255,68,68,0.1);
+            display: none;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -86,29 +108,107 @@
         </div>
     </div>
 
+    <div id="error-message"></div>
+
     <h1>Traffic Light Detection</h1>
     <div class="container">
         <div class="video-container">
-            <h2>Raw Feed</h2>
-            <img id="rawFeed" src="{{ url_for('video_feed_raw') }}" alt="Raw video feed">
+            <h2>Camera Feed</h2>
+            <video id="videoElement" autoplay playsinline></video>
+            <div class="loading" id="rawLoading">Initializing camera...</div>
         </div>
         <div class="video-container">
             <h2>Processed Feed</h2>
-            <img id="processedFeed" src="{{ url_for('video_feed_processed') }}" alt="Processed video feed">
+            <canvas id="processedCanvas"></canvas>
+            <div class="loading" id="processedLoading">Processing...</div>
         </div>
     </div>
 
     <script>
+        const video = document.getElementById('videoElement');
+        const canvas = document.getElementById('processedCanvas');
+        const ctx = canvas.getContext('2d');
+        const permissionOverlay = document.getElementById('permissionOverlay');
+        const errorMessage = document.getElementById('error-message');
+        const rawLoading = document.getElementById('rawLoading');
+        const processedLoading = document.getElementById('processedLoading');
+
+        let processingFrame = false;
+
         async function requestCameraPermission() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                // Stop the stream immediately as we don't need it (our backend handles the camera)
-                stream.getTracks().forEach(track => track.stop());
-                // Hide the permission overlay
-                document.getElementById('permissionOverlay').classList.add('hidden');
+                rawLoading.style.display = 'block';
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'environment' // Prefer rear camera on mobile
+                    } 
+                });
+                
+                video.srcObject = stream;
+                permissionOverlay.classList.add('hidden');
+                errorMessage.style.display = 'none';
+                
+                // Set canvas size to match video
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    rawLoading.style.display = 'none';
+                    startProcessing();
+                };
             } catch (err) {
-                alert('Camera access denied. The application requires camera access to function properly.');
+                rawLoading.style.display = 'none';
+                errorMessage.textContent = 'Camera access denied. The application requires camera access to function properly.';
+                errorMessage.style.display = 'block';
             }
+        }
+
+        async function processFrame() {
+            if (!processingFrame) {
+                processingFrame = true;
+                processedLoading.style.display = 'block';
+
+                try {
+                    // Draw the current video frame to the canvas
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    // Get the frame data
+                    const imageData = canvas.toDataURL('image/jpeg');
+                    
+                    // Send the frame to the server for processing
+                    const response = await fetch('/process_frame', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ image: imageData })
+                    });
+
+                    if (response.ok) {
+                        const processedImageData = await response.json();
+                        // Draw the processed frame
+                        const img = new Image();
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            processedLoading.style.display = 'none';
+                            processingFrame = false;
+                        };
+                        img.src = processedImageData.image;
+                    } else {
+                        throw new Error('Failed to process frame');
+                    }
+                } catch (error) {
+                    console.error('Error processing frame:', error);
+                    processedLoading.style.display = 'none';
+                    processingFrame = false;
+                }
+            }
+        }
+
+        function startProcessing() {
+            // Process frames every 100ms (10 fps)
+            setInterval(processFrame, 100);
         }
     </script>
 </body>
