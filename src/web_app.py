@@ -16,15 +16,35 @@ class TrafficLightDetector:
             raise FileNotFoundError(f"Model file not found at {model_path}")
         self.model = YOLO(str(model_path))
         
-        # Initialize camera - try different camera indices if 0 doesn't work
-        camera_index = int(os.getenv('CAMERA_INDEX', '0'))
-        self.cap = cv2.VideoCapture(camera_index)
-        if not self.cap.isOpened():
-            # If camera fails, create a black frame for testing
+        # Check if we're running on Render
+        self.is_render = os.getenv('RENDER', False)
+        if self.is_render:
+            # In production, use a test image instead of camera
             self.test_mode = True
             self.test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(self.test_frame, 
+                       "Camera access not available in production", 
+                       (50, 240),
+                       cv2.FONT_HERSHEY_DUPLEX, 
+                       0.8, 
+                       (255, 255, 255), 
+                       2)
         else:
-            self.test_mode = False
+            # Initialize camera - try different camera indices if 0 doesn't work
+            camera_index = int(os.getenv('CAMERA_INDEX', '0'))
+            self.cap = cv2.VideoCapture(camera_index)
+            if not self.cap.isOpened():
+                self.test_mode = True
+                self.test_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(self.test_frame, 
+                           "No camera detected", 
+                           (50, 240),
+                           cv2.FONT_HERSHEY_DUPLEX, 
+                           1.0, 
+                           (255, 255, 255), 
+                           2)
+            else:
+                self.test_mode = False
 
     def get_color_for_class(self, class_name):
         # Define vibrant colors for each class (in BGR format)
@@ -42,7 +62,6 @@ class TrafficLightDetector:
         
         # Create a copy of the frame for visualization
         processed_frame = frame.copy()
-        frame_height, frame_width = processed_frame.shape[:2]
         
         # Process results
         if results and len(results) > 0:
@@ -90,11 +109,8 @@ class TrafficLightDetector:
         return processed_frame
 
     def get_frame(self):
-        if self.test_mode:
+        if self.test_mode or self.is_render:
             frame = self.test_frame.copy()
-            # Add text to indicate test mode
-            cv2.putText(frame, "Camera Not Available - Test Mode", (50, 240),
-                      cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 2)
         else:
             ret, frame = self.cap.read()
             if not ret:
@@ -110,7 +126,7 @@ class TrafficLightDetector:
         return raw_jpeg.tobytes(), processed_jpeg.tobytes()
 
     def __del__(self):
-        if not self.test_mode:
+        if not self.test_mode and not self.is_render:
             self.cap.release()
 
 detector = TrafficLightDetector()
@@ -142,4 +158,6 @@ def video_feed_processed():
 if __name__ == '__main__':
     # Get port from environment variable (Render sets this)
     port = int(os.getenv('PORT', 8000))
-    app.run(host='0.0.0.0', port=port) 
+    # In production, host should be '0.0.0.0'
+    host = '0.0.0.0' if os.getenv('RENDER') else 'localhost'
+    app.run(host=host, port=port) 
