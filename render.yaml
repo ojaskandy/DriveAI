@@ -6,7 +6,8 @@ services:
       pip install -r requirements.txt
       mkdir -p src/models
       cp models/best_traffic_small_yolo.pt src/models/
-    startCommand: gunicorn --worker-class eventlet -w 1 "wsgi:app"
+      ls -la src/models/
+    startCommand: gunicorn --worker-class eventlet -w 1 --timeout 0 --log-level debug "wsgi:app"
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
@@ -15,5 +16,7 @@ services:
       - key: PORT
         value: 8080
       - key: RENDER
+        value: "true"
+      - key: PYTHONUNBUFFERED
         value: "true"
     healthCheckPath: / 

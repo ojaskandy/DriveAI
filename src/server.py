@@ -7,39 +7,63 @@ import base64
 import os
 from pathlib import Path
 import logging
+import sys
 
 # Set up logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 class TrafficLightDetector:
     def __init__(self):
-        # Try different possible model paths
-        possible_paths = [
-            Path("src/models/best_traffic_small_yolo.pt"),
-            Path("models/best_traffic_small_yolo.pt"),
-            Path(os.path.join(os.path.dirname(__file__), "models/best_traffic_small_yolo.pt"))
-        ]
-        
-        model_path = None
-        for path in possible_paths:
-            if path.exists():
-                model_path = path
-                break
-        
-        if model_path is None:
-            error_msg = (
-                f"Model file 'best_traffic_small_yolo.pt' not found. Tried paths:\n"
-                f"{chr(10).join(str(p) for p in possible_paths)}\n"
-                f"Current working directory: {os.getcwd()}"
-            )
-            raise FileNotFoundError(error_msg)
+        self.model = None
+        self.initialize_model()
+
+    def initialize_model(self):
+        try:
+            # List all possible model paths
+            possible_paths = [
+                Path("src/models/best_traffic_small_yolo.pt"),
+                Path("models/best_traffic_small_yolo.pt"),
+                Path(os.path.join(os.path.dirname(__file__), "models/best_traffic_small_yolo.pt")),
+                Path("/opt/render/project/src/models/best_traffic_small_yolo.pt"),
+                Path("/opt/render/project/src/src/models/best_traffic_small_yolo.pt")
+            ]
             
-        logger.info(f"Loading model from: {model_path}")
-        self.model = YOLO(str(model_path))
+            # Log current working directory and PYTHONPATH
+            logger.info(f"Current working directory: {os.getcwd()}")
+            logger.info(f"PYTHONPATH: {os.getenv('PYTHONPATH', 'Not set')}")
+            logger.info(f"Directory contents of current location: {os.listdir('.')}")
+            
+            # Try to find the model file
+            model_path = None
+            for path in possible_paths:
+                logger.info(f"Checking path: {path} (exists: {path.exists()})")
+                if path.exists():
+                    model_path = path
+                    break
+            
+            if model_path is None:
+                error_msg = (
+                    f"Model file 'best_traffic_small_yolo.pt' not found. Tried paths:\n"
+                    f"{chr(10).join(str(p) for p in possible_paths)}"
+                )
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+                
+            logger.info(f"Loading model from: {model_path}")
+            self.model = YOLO(str(model_path))
+            logger.info("Model loaded successfully!")
+            
+        except Exception as e:
+            logger.error(f"Error initializing model: {str(e)}", exc_info=True)
+            raise
 
     def get_color_for_class(self, class_name):
         # Define vibrant colors for each class (in BGR format)
@@ -53,7 +77,11 @@ class TrafficLightDetector:
 
     def process_frame(self, frame):
         try:
-            logger.debug(f"Processing frame with shape: {frame.shape}")
+            if self.model is None:
+                logger.error("Model not initialized!")
+                return frame
+
+            logger.info(f"Processing frame with shape: {frame.shape}")
             
             # Ensure frame is not too large
             max_size = 640
@@ -72,7 +100,7 @@ class TrafficLightDetector:
             # Process results
             if results and len(results) > 0:
                 boxes = results[0].boxes
-                logger.debug(f"Found {len(boxes)} detections")
+                logger.info(f"Found {len(boxes)} detections")
                 
                 for box in boxes:
                     # Get box coordinates
@@ -83,7 +111,7 @@ class TrafficLightDetector:
                     conf = float(box.conf[0])
                     class_name = results[0].names[cls].lower()
                     
-                    logger.debug(f"Detection: {class_name} ({conf:.2f}) at [{x1}, {y1}, {x2}, {y2}]")
+                    logger.info(f"Detection: {class_name} ({conf:.2f}) at [{x1}, {y1}, {x2}, {y2}]")
                     
                     # Get color based on class
                     color = self.get_color_for_class(class_name)
@@ -119,7 +147,7 @@ class TrafficLightDetector:
             return processed_frame
         except Exception as e:
             logger.error(f"Error in process_frame: {str(e)}", exc_info=True)
-            raise
+            return frame
 
 detector = TrafficLightDetector()
 
@@ -130,6 +158,11 @@ def index():
 @socketio.on('connect')
 def handle_connect():
     logger.info("Client connected")
+    emit('status', {'message': 'Connected to server'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logger.info("Client disconnected")
 
 @socketio.on('frame')
 def handle_frame(data):
@@ -139,10 +172,12 @@ def handle_frame(data):
         nparr = np.frombuffer(img_data, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
-        logger.debug(f"Received frame with shape: {frame.shape if frame is not None else 'None'}")
+        logger.info(f"Received frame with shape: {frame.shape if frame is not None else 'None'}")
         
         if frame is None:
-            raise ValueError("Failed to decode frame")
+            logger.error("Failed to decode frame")
+            emit('error', {'message': 'Failed to decode frame'})
+            return
         
         # Process the frame
         processed_frame = detector.process_frame(frame)
@@ -152,7 +187,7 @@ def handle_frame(data):
         encoded_img = base64.b64encode(buffer).decode('utf-8')
         result_data = f'data:image/jpeg;base64,{encoded_img}'
         
-        logger.debug("Frame processed and sent back to client")
+        logger.info("Frame processed and sent back to client")
         
         # Send back to client
         emit('detection', result_data)

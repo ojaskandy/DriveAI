@@ -16,33 +16,38 @@
             flex-direction: column;
         }
         h1 {
-            font-size: 2em;
+            font-size: 2.5em;
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 30px;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
         }
         .container {
             display: flex;
             flex-direction: column;
             gap: 20px;
-            max-width: 800px;
+            max-width: 1200px;
             margin: 0 auto;
             flex: 1;
         }
         .video-container {
-            background: #2d2d2d;
-            padding: 15px;
-            border-radius: 10px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .video-wrapper {
             position: relative;
-            aspect-ratio: 4/3;
-            width: 100%;
+            background: #2d2d2d;
+            padding: 10px;
+            border-radius: 10px;
+            transition: transform 0.3s ease;
+        }
+        .video-wrapper:hover {
+            transform: scale(1.02);
         }
         video, canvas {
-            width: 100%;
-            height: 100%;
+            max-width: 100%;
             border-radius: 5px;
-            background: #000;
-            object-fit: cover;
         }
         .permission-overlay {
             position: fixed;
@@ -56,49 +61,23 @@
             align-items: center;
             z-index: 1000;
         }
-        .permission-box {
-            background: #2d2d2d;
-            padding: 30px;
-            border-radius: 10px;
-            text-align: center;
-            max-width: 500px;
-            margin: 20px;
-        }
-        .permission-button {
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            margin-top: 20px;
-            transition: background 0.3s ease;
-        }
-        .permission-button:hover {
-            background: #45a049;
-        }
-        .hidden {
-            display: none !important;
-        }
-        #error-message {
-            color: #ff4444;
-            text-align: center;
-            margin: 20px 0;
-            padding: 10px;
-            border-radius: 5px;
-            background: rgba(255,68,68,0.1);
+        .permission-overlay.hidden {
             display: none;
         }
-        .loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
+        .error-message {
+            background: #ff4444;
             color: white;
-            background: rgba(0,0,0,0.7);
             padding: 10px 20px;
             border-radius: 5px;
+            margin-top: 10px;
+            display: none;
+        }
+        .status-message {
+            background: #44ff44;
+            color: black;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-top: 10px;
             display: none;
         }
         .fps-counter {
@@ -107,125 +86,211 @@
             right: 10px;
             background: rgba(0,0,0,0.7);
             padding: 5px 10px;
-            border-radius: 3px;
-            font-size: 12px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: none;
         }
         .controls {
             display: flex;
-            justify-content: center;
             gap: 10px;
             margin-top: 20px;
         }
-        .control-button {
-            background: #2d2d2d;
+        button {
+            background: #4a4a4a;
             color: white;
             border: none;
             padding: 10px 20px;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 14px;
             transition: background 0.3s ease;
         }
-        .control-button:hover {
-            background: #3d3d3d;
-        }
-        .control-button.active {
-            background: #4CAF50;
+        button:hover {
+            background: #5a5a5a;
         }
     </style>
 </head>
 <body>
-    <div id="permissionOverlay" class="permission-overlay">
-        <div class="permission-box">
-            <h2>Camera Permission Required</h2>
-            <p>This application needs access to your camera to detect traffic lights. Please allow camera access when prompted.</p>
-            <button class="permission-button" onclick="requestCameraPermission()">Allow Camera Access</button>
-        </div>
-    </div>
-
-    <div id="error-message"></div>
-
-    <h1>Traffic Light Detection</h1>
     <div class="container">
-        <div class="video-container">
-            <video id="videoElement" autoplay playsinline muted></video>
-            <div class="loading" id="rawLoading">Initializing camera...</div>
-            <div class="fps-counter" id="rawFps">FPS: 0</div>
+        <h1>Traffic Light Detection</h1>
+        
+        <div class="permission-overlay">
+            <button onclick="requestCameraPermission()">Allow Camera Access</button>
         </div>
+
         <div class="video-container">
-            <canvas id="processedCanvas"></canvas>
-            <div class="loading" id="processedLoading">Processing...</div>
-            <div class="fps-counter" id="processedFps">FPS: 0</div>
+            <div class="video-wrapper">
+                <video id="video" autoplay playsinline></video>
+                <div id="rawFps" class="fps-counter">FPS: 0</div>
+                <div id="rawLoading" class="loading">Starting camera...</div>
+            </div>
+            <div class="video-wrapper">
+                <canvas id="canvas"></canvas>
+                <div id="processedFps" class="fps-counter">FPS: 0</div>
+                <div id="processedLoading" class="loading">Processing...</div>
+            </div>
         </div>
+
+        <div class="error-message" id="errorMessage"></div>
+        <div class="status-message" id="statusMessage"></div>
+
         <div class="controls">
-            <button id="cameraToggle" class="control-button">Switch Camera</button>
-            <button id="pauseButton" class="control-button">Pause</button>
+            <button onclick="toggleCamera()">Switch Camera</button>
+            <button onclick="togglePause()">Pause</button>
         </div>
     </div>
 
     <script>
-        const video = document.getElementById('videoElement');
-        const canvas = document.getElementById('processedCanvas');
-        const ctx = canvas.getContext('2d');
-        const permissionOverlay = document.getElementById('permissionOverlay');
-        const errorMessage = document.getElementById('error-message');
-        const rawLoading = document.getElementById('rawLoading');
-        const processedLoading = document.getElementById('processedLoading');
-        const rawFpsCounter = document.getElementById('rawFps');
-        const processedFpsCounter = document.getElementById('processedFps');
-        const cameraToggle = document.getElementById('cameraToggle');
-        const pauseButton = document.getElementById('pauseButton');
-
-        let socket = null;
+        let socket;
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let stream;
         let isProcessing = false;
         let isPaused = false;
         let currentFacingMode = 'environment';
-        let lastFrameTime = performance.now();
-        let lastProcessedTime = performance.now();
-        let rawFps = 0;
-        let processedFps = 0;
-        let stream = null;
+        
+        const permissionOverlay = document.querySelector('.permission-overlay');
+        const rawLoading = document.getElementById('rawLoading');
+        const processedLoading = document.getElementById('processedLoading');
+        const errorMessage = document.getElementById('errorMessage');
+        const statusMessage = document.getElementById('statusMessage');
+        
+        let rawFrameCount = 0;
+        let processedFrameCount = 0;
+        let lastRawCheck = Date.now();
+        let lastProcessedCheck = Date.now();
+
+        function updateFPS() {
+            const now = Date.now();
+            
+            if (now - lastRawCheck >= 1000) {
+                document.getElementById('rawFps').textContent = `FPS: ${rawFrameCount}`;
+                rawFrameCount = 0;
+                lastRawCheck = now;
+            }
+            
+            if (now - lastProcessedCheck >= 1000) {
+                document.getElementById('processedFps').textContent = `FPS: ${processedFrameCount}`;
+                processedFrameCount = 0;
+                lastProcessedCheck = now;
+            }
+        }
+
+        function showStatus(message, isError = false) {
+            if (isError) {
+                errorMessage.textContent = message;
+                errorMessage.style.display = 'block';
+                statusMessage.style.display = 'none';
+            } else {
+                statusMessage.textContent = message;
+                statusMessage.style.display = 'block';
+                errorMessage.style.display = 'none';
+            }
+            setTimeout(() => {
+                if (isError) {
+                    errorMessage.style.display = 'none';
+                } else {
+                    statusMessage.style.display = 'none';
+                }
+            }, 5000);
+        }
 
         function connectSocket() {
-            // Get the current host
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const host = window.location.host;
-            socket = io(`${protocol}//${host}`);
-
-            socket.on('connect', () => {
-                console.log('Connected to server');
+            const wsUrl = `${protocol}//${window.location.host}`;
+            
+            socket = io(wsUrl, {
+                transports: ['websocket'],
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000
             });
 
-            socket.on('detection', data => {
+            socket.on('connect', () => {
+                showStatus('Connected to server');
+                startProcessing();
+            });
+
+            socket.on('disconnect', () => {
+                showStatus('Disconnected from server', true);
+            });
+
+            socket.on('error', (data) => {
+                showStatus(`Error: ${data.message}`, true);
+            });
+
+            socket.on('status', (data) => {
+                showStatus(data.message);
+            });
+
+            socket.on('detection', (imageData) => {
                 const img = new Image();
                 img.onload = () => {
                     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    processedFrameCount++;
+                    updateFPS();
                     processedLoading.style.display = 'none';
-                    
-                    // Update processed FPS
-                    const now = performance.now();
-                    const delta = now - lastProcessedTime;
-                    processedFps = Math.round(1000 / delta);
-                    lastProcessedTime = now;
-                    processedFpsCounter.textContent = `FPS: ${processedFps}`;
-                    
                     isProcessing = false;
                     if (!isPaused) {
                         requestAnimationFrame(processFrame);
                     }
                 };
-                img.src = data;
+                img.src = imageData;
             });
 
-            socket.on('error', data => {
-                console.error('Server error:', data.message);
-                errorMessage.textContent = `Error: ${data.message}`;
-                errorMessage.style.display = 'block';
-                isProcessing = false;
-                if (!isPaused) {
-                    setTimeout(() => requestAnimationFrame(processFrame), 1000);
-                }
+            socket.on('connect_error', (error) => {
+                showStatus(`Connection error: ${error.message}`, true);
             });
+        }
+
+        function processFrame() {
+            if (!isProcessing && video.srcObject && !isPaused) {
+                isProcessing = true;
+                processedLoading.style.display = 'block';
+
+                try {
+                    // Create a temporary canvas for frame capture
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = video.videoWidth;
+                    tempCanvas.height = video.videoHeight;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    
+                    // Draw the current video frame to the temporary canvas
+                    tempCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+                    
+                    // Get the frame data
+                    const imageData = tempCanvas.toDataURL('image/jpeg', 0.7);
+                    
+                    // Update canvas size if needed
+                    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                    }
+                    
+                    // Send the frame to the server
+                    socket.emit('frame', imageData);
+                    rawFrameCount++;
+                    updateFPS();
+                } catch (error) {
+                    console.error('Error processing frame:', error);
+                    processedLoading.style.display = 'none';
+                    isProcessing = false;
+                    showStatus(`Error: ${error.message}`, true);
+                    if (!isPaused) {
+                        setTimeout(() => requestAnimationFrame(processFrame), 1000);
+                    }
+                }
+            } else if (!isPaused) {
+                requestAnimationFrame(processFrame);
+            }
         }
 
         async function requestCameraPermission() {
@@ -262,120 +327,37 @@
             } catch (err) {
                 console.error('Camera error:', err);
                 rawLoading.style.display = 'none';
-                errorMessage.textContent = 'Camera access denied or error occurred. The application requires camera access to function properly.';
-                errorMessage.style.display = 'block';
-            }
-        }
-
-        function updateFPS() {
-            if (!isPaused) {
-                const now = performance.now();
-                
-                // Update raw FPS
-                if (video.srcObject) {
-                    const rawDelta = now - lastFrameTime;
-                    rawFps = Math.round(1000 / rawDelta);
-                    lastFrameTime = now;
-                    rawFpsCounter.textContent = `FPS: ${rawFps}`;
-                }
-
-                // Request next frame
-                requestAnimationFrame(updateFPS);
-            }
-        }
-
-        async function processFrame() {
-            if (!isProcessing && video.srcObject && !isPaused) {
-                isProcessing = true;
-                processedLoading.style.display = 'block';
-
-                try {
-                    // Create a temporary canvas for frame capture
-                    const tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = video.videoWidth;
-                    tempCanvas.height = video.videoHeight;
-                    const tempCtx = tempCanvas.getContext('2d');
-                    
-                    // Draw the current video frame to the temporary canvas
-                    tempCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-                    
-                    // Get the frame data
-                    const imageData = tempCanvas.toDataURL('image/jpeg', 0.7);
-                    
-                    // Update canvas size if needed
-                    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-                    }
-                    
-                    // Send the frame to the server
-                    socket.emit('frame', imageData);
-                } catch (error) {
-                    console.error('Error processing frame:', error);
-                    processedLoading.style.display = 'none';
-                    isProcessing = false;
-                    errorMessage.textContent = `Error: ${error.message}`;
-                    errorMessage.style.display = 'block';
-                    if (!isPaused) {
-                        setTimeout(() => requestAnimationFrame(processFrame), 1000);
-                    }
-                }
-            } else if (!isPaused) {
-                requestAnimationFrame(processFrame);
-            }
-        }
-
-        async function toggleCamera() {
-            if (stream) {
-                // Stop all tracks
-                stream.getTracks().forEach(track => track.stop());
-            }
-            
-            // Toggle facing mode
-            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-            
-            // Request new camera stream
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: currentFacingMode,
-                        width: { ideal: 640 },
-                        height: { ideal: 480 }
-                    }
-                });
-                video.srcObject = stream;
-            } catch (err) {
-                console.error('Error switching camera:', err);
-                errorMessage.textContent = 'Failed to switch camera. Please try again.';
-                errorMessage.style.display = 'block';
-            }
-        }
-
-        function togglePause() {
-            isPaused = !isPaused;
-            pauseButton.textContent = isPaused ? 'Resume' : 'Pause';
-            pauseButton.classList.toggle('active');
-            
-            if (!isPaused) {
-                startProcessing();
+                showStatus('Camera access denied or error occurred', true);
             }
         }
 
         function startProcessing() {
-            updateFPS();
-            processFrame();
+            if (!isPaused) {
+                processFrame();
+            }
         }
 
-        // Event listeners
-        cameraToggle.addEventListener('click', toggleCamera);
-        pauseButton.addEventListener('click', togglePause);
+        async function toggleCamera() {
+            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+            
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            
+            await requestCameraPermission();
+        }
+
+        function togglePause() {
+            isPaused = !isPaused;
+            if (!isPaused) {
+                processFrame();
+            }
+        }
 
         // Handle page visibility changes
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 isPaused = true;
-                pauseButton.textContent = 'Resume';
-                pauseButton.classList.add('active');
             }
         });
     </script>
