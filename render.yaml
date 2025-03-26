@@ -6,7 +6,7 @@ services:
       pip install -r requirements.txt
       mkdir -p src/models
       cp models/best_traffic_small_yolo.pt src/models/
-    startCommand: gunicorn --chdir src wsgi:app --log-level debug
+    startCommand: gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 1 --threads 4 --timeout 0 --chdir src server:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0

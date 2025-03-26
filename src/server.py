@@ -1,24 +1,22 @@
+from flask import Flask, render_template
+from flask_socketio import SocketIO, emit
+from ultralytics import YOLO
 import cv2
 import numpy as np
-from pathlib import Path
-from flask import Flask, render_template, request, jsonify
-from ultralytics import YOLO
 import base64
 import os
-import re
-from PIL import Image
-import io
+from pathlib import Path
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max-size
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 class TrafficLightDetector:
     def __init__(self):
         # Try different possible model paths
         possible_paths = [
-            Path("src/models/best_traffic_small_yolo.pt"),  # When running from root
-            Path("models/best_traffic_small_yolo.pt"),      # When running from src
-            Path(os.path.join(os.path.dirname(__file__), "models/best_traffic_small_yolo.pt"))  # Relative to this file
+            Path("src/models/best_traffic_small_yolo.pt"),
+            Path("models/best_traffic_small_yolo.pt"),
+            Path(os.path.join(os.path.dirname(__file__), "models/best_traffic_small_yolo.pt"))
         ]
         
         model_path = None
@@ -117,65 +115,32 @@ detector = TrafficLightDetector()
 def index():
     return render_template('index.html')
 
-def decode_base64_image(base64_string):
-    try:
-        # Extract the base64 encoded binary data from the image data URL
-        image_data = re.sub('^data:image/.+;base64,', '', base64_string)
-        # Decode base64 string
-        image_bytes = base64.b64decode(image_data)
-        
-        # Use PIL for initial decoding (faster than OpenCV for JPEG)
-        image = Image.open(io.BytesIO(image_bytes))
-        # Convert to RGB (PIL uses RGB by default)
-        image = image.convert('RGB')
-        # Convert to numpy array
-        image_array = np.array(image)
-        # Convert from RGB to BGR (OpenCV uses BGR)
-        image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
-        return image_array
-    except Exception as e:
-        print(f"Error decoding image: {str(e)}")
-        raise
+@socketio.on('connect')
+def handle_connect():
+    print("Client connected")
 
-def encode_frame_to_base64(frame, quality=70):
+@socketio.on('frame')
+def handle_frame(data):
     try:
-        # Convert from BGR to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # Convert to PIL Image
-        image = Image.fromarray(frame_rgb)
-        # Save to bytes with JPEG compression
-        buffer = io.BytesIO()
-        image.save(buffer, format='JPEG', quality=quality)
-        # Get the bytes and encode to base64
-        image_bytes = buffer.getvalue()
-        base64_string = base64.b64encode(image_bytes).decode('utf-8')
-        # Return as data URL
-        return f'data:image/jpeg;base64,{base64_string}'
-    except Exception as e:
-        print(f"Error encoding frame: {str(e)}")
-        raise
-
-@app.route('/process_frame', methods=['POST'])
-def process_frame():
-    try:
-        # Get the frame data from the request
-        data = request.get_json()
-        frame = decode_base64_image(data['image'])
+        # Decode base64 image from client
+        img_data = base64.b64decode(data.split(',')[1])
+        nparr = np.frombuffer(img_data, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         # Process the frame
         processed_frame = detector.process_frame(frame)
         
-        # Convert processed frame to base64
-        processed_image = encode_frame_to_base64(processed_frame)
+        # Encode result as base64
+        _, buffer = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        encoded_img = base64.b64encode(buffer).decode('utf-8')
+        result_data = f'data:image/jpeg;base64,{encoded_img}'
         
-        return jsonify({'image': processed_image})
+        # Send back to client
+        emit('detection', result_data)
     except Exception as e:
         print(f"Error processing frame: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        emit('error', {'message': str(e)})
 
 if __name__ == '__main__':
-    # Get port from environment variable (Render sets this)
     port = int(os.getenv('PORT', 8000))
-    # In production, host should be '0.0.0.0'
-    host = '0.0.0.0'
-    app.run(host=host, port=port) 
+    socketio.run(app, host='0.0.0.0', port=port, debug=True) 

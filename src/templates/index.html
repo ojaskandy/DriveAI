@@ -2,6 +2,8 @@
 <html>
 <head>
     <title>Traffic Light Detection</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
         body {
             font-family: 'Segoe UI', sans-serif;
@@ -9,37 +11,38 @@
             padding: 20px;
             background-color: #1a1a1a;
             color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
         h1 {
-            font-size: 2.5em;
+            font-size: 2em;
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
         }
         .container {
             display: flex;
-            justify-content: center;
+            flex-direction: column;
             gap: 20px;
-            flex-wrap: wrap;
-            max-width: 1200px;
+            max-width: 800px;
             margin: 0 auto;
+            flex: 1;
         }
         .video-container {
             background: #2d2d2d;
             padding: 15px;
             border-radius: 10px;
-            transition: transform 0.3s ease;
-            flex: 1;
-            min-width: 300px;
             position: relative;
-        }
-        .video-container:hover {
-            transform: scale(1.02);
+            aspect-ratio: 4/3;
+            width: 100%;
         }
         video, canvas {
             width: 100%;
+            height: 100%;
             border-radius: 5px;
             background: #000;
+            object-fit: cover;
         }
         .permission-overlay {
             position: fixed;
@@ -59,6 +62,7 @@
             border-radius: 10px;
             text-align: center;
             max-width: 500px;
+            margin: 20px;
         }
         .permission-button {
             background: #4CAF50;
@@ -75,7 +79,7 @@
             background: #45a049;
         }
         .hidden {
-            display: none;
+            display: none !important;
         }
         #error-message {
             color: #ff4444;
@@ -106,6 +110,28 @@
             border-radius: 3px;
             font-size: 12px;
         }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .control-button {
+            background: #2d2d2d;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s ease;
+        }
+        .control-button:hover {
+            background: #3d3d3d;
+        }
+        .control-button.active {
+            background: #4CAF50;
+        }
     </style>
 </head>
 <body>
@@ -122,16 +148,18 @@
     <h1>Traffic Light Detection</h1>
     <div class="container">
         <div class="video-container">
-            <h2>Camera Feed</h2>
-            <video id="videoElement" autoplay playsinline></video>
+            <video id="videoElement" autoplay playsinline muted></video>
             <div class="loading" id="rawLoading">Initializing camera...</div>
             <div class="fps-counter" id="rawFps">FPS: 0</div>
         </div>
         <div class="video-container">
-            <h2>Processed Feed</h2>
             <canvas id="processedCanvas"></canvas>
             <div class="loading" id="processedLoading">Processing...</div>
             <div class="fps-counter" id="processedFps">FPS: 0</div>
+        </div>
+        <div class="controls">
+            <button id="cameraToggle" class="control-button">Switch Camera</button>
+            <button id="pauseButton" class="control-button">Pause</button>
         </div>
     </div>
 
@@ -140,26 +168,74 @@
         const canvas = document.getElementById('processedCanvas');
         const ctx = canvas.getContext('2d');
         const permissionOverlay = document.getElementById('permissionOverlay');
-        const errorMessage = document.getElementById('errorMessage');
+        const errorMessage = document.getElementById('error-message');
         const rawLoading = document.getElementById('rawLoading');
         const processedLoading = document.getElementById('processedLoading');
         const rawFpsCounter = document.getElementById('rawFps');
         const processedFpsCounter = document.getElementById('processedFps');
+        const cameraToggle = document.getElementById('cameraToggle');
+        const pauseButton = document.getElementById('pauseButton');
 
+        let socket = null;
         let isProcessing = false;
+        let isPaused = false;
+        let currentFacingMode = 'environment';
         let lastFrameTime = performance.now();
         let lastProcessedTime = performance.now();
         let rawFps = 0;
         let processedFps = 0;
+        let stream = null;
+
+        function connectSocket() {
+            // Get the current host
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            socket = io(`${protocol}//${host}`);
+
+            socket.on('connect', () => {
+                console.log('Connected to server');
+            });
+
+            socket.on('detection', data => {
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    processedLoading.style.display = 'none';
+                    
+                    // Update processed FPS
+                    const now = performance.now();
+                    const delta = now - lastProcessedTime;
+                    processedFps = Math.round(1000 / delta);
+                    lastProcessedTime = now;
+                    processedFpsCounter.textContent = `FPS: ${processedFps}`;
+                    
+                    isProcessing = false;
+                    if (!isPaused) {
+                        requestAnimationFrame(processFrame);
+                    }
+                };
+                img.src = data;
+            });
+
+            socket.on('error', data => {
+                console.error('Server error:', data.message);
+                errorMessage.textContent = `Error: ${data.message}`;
+                errorMessage.style.display = 'block';
+                isProcessing = false;
+                if (!isPaused) {
+                    setTimeout(() => requestAnimationFrame(processFrame), 1000);
+                }
+            });
+        }
 
         async function requestCameraPermission() {
             try {
                 rawLoading.style.display = 'block';
-                const stream = await navigator.mediaDevices.getUserMedia({ 
+                stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { 
+                        facingMode: currentFacingMode,
                         width: { ideal: 640 },
-                        height: { ideal: 480 },
-                        facingMode: 'environment' // Prefer rear camera on mobile
+                        height: { ideal: 480 }
                     } 
                 });
                 
@@ -172,6 +248,7 @@
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                     rawLoading.style.display = 'none';
+                    connectSocket();
                     startProcessing();
                 };
             } catch (err) {
@@ -182,22 +259,24 @@
         }
 
         function updateFPS() {
-            const now = performance.now();
-            
-            // Update raw FPS
-            if (video.srcObject) {
-                const rawDelta = now - lastFrameTime;
-                rawFps = Math.round(1000 / rawDelta);
-                lastFrameTime = now;
-                rawFpsCounter.textContent = `FPS: ${rawFps}`;
-            }
+            if (!isPaused) {
+                const now = performance.now();
+                
+                // Update raw FPS
+                if (video.srcObject) {
+                    const rawDelta = now - lastFrameTime;
+                    rawFps = Math.round(1000 / rawDelta);
+                    lastFrameTime = now;
+                    rawFpsCounter.textContent = `FPS: ${rawFps}`;
+                }
 
-            // Request next frame
-            requestAnimationFrame(updateFPS);
+                // Request next frame
+                requestAnimationFrame(updateFPS);
+            }
         }
 
         async function processFrame() {
-            if (!isProcessing && video.srcObject) {
+            if (!isProcessing && video.srcObject && !isPaused) {
                 isProcessing = true;
                 processedLoading.style.display = 'block';
 
@@ -206,60 +285,76 @@
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                     
                     // Get the frame data
-                    const imageData = canvas.toDataURL('image/jpeg', 0.7); // Reduced quality for better performance
+                    const imageData = canvas.toDataURL('image/jpeg', 0.7);
                     
-                    // Send the frame to the server for processing
-                    const response = await fetch('/process_frame', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ image: imageData })
-                    });
-
-                    if (response.ok) {
-                        const processedImageData = await response.json();
-                        
-                        // Draw the processed frame
-                        const img = new Image();
-                        img.onload = () => {
-                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                            processedLoading.style.display = 'none';
-                            
-                            // Update processed FPS
-                            const now = performance.now();
-                            const delta = now - lastProcessedTime;
-                            processedFps = Math.round(1000 / delta);
-                            lastProcessedTime = now;
-                            processedFpsCounter.textContent = `FPS: ${processedFps}`;
-                            
-                            isProcessing = false;
-                            // Immediately request next frame
-                            requestAnimationFrame(processFrame);
-                        };
-                        img.src = processedImageData.image;
-                    } else {
-                        throw new Error('Failed to process frame');
-                    }
+                    // Send the frame to the server
+                    socket.emit('frame', imageData);
                 } catch (error) {
                     console.error('Error processing frame:', error);
                     processedLoading.style.display = 'none';
                     isProcessing = false;
-                    // Retry after a short delay
-                    setTimeout(() => requestAnimationFrame(processFrame), 1000);
+                    if (!isPaused) {
+                        setTimeout(() => requestAnimationFrame(processFrame), 1000);
+                    }
                 }
-            } else {
-                // If we're still processing, request next frame after a short delay
+            } else if (!isPaused) {
                 requestAnimationFrame(processFrame);
             }
         }
 
+        async function toggleCamera() {
+            if (stream) {
+                // Stop all tracks
+                stream.getTracks().forEach(track => track.stop());
+            }
+            
+            // Toggle facing mode
+            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+            
+            // Request new camera stream
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: currentFacingMode,
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    }
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error('Error switching camera:', err);
+                errorMessage.textContent = 'Failed to switch camera. Please try again.';
+                errorMessage.style.display = 'block';
+            }
+        }
+
+        function togglePause() {
+            isPaused = !isPaused;
+            pauseButton.textContent = isPaused ? 'Resume' : 'Pause';
+            pauseButton.classList.toggle('active');
+            
+            if (!isPaused) {
+                startProcessing();
+            }
+        }
+
         function startProcessing() {
-            // Start FPS counter
             updateFPS();
-            // Start frame processing
             processFrame();
         }
+
+        // Event listeners
+        cameraToggle.addEventListener('click', toggleCamera);
+        pauseButton.addEventListener('click', togglePause);
+
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                isPaused = true;
+                pauseButton.textContent = 'Resume';
+                pauseButton.classList.add('active');
+            }
+        });
     </script>
 </body>
 </html> 
