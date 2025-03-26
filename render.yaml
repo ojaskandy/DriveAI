@@ -2,11 +2,18 @@ services:
   - type: web
     name: traffic-light-detection
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class eventlet -w 1 src.server:app
+    buildCommand: |
+      pip install -r requirements.txt
+      mkdir -p src/models
+      cp models/best_traffic_small_yolo.pt src/models/
+    startCommand: gunicorn --worker-class eventlet -w 1 "wsgi:app"
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
+      - key: PYTHONPATH
+        value: .
       - key: PORT
         value: 8080
+      - key: RENDER
+        value: "true"
     healthCheckPath: / 

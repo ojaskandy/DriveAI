@@ -165,5 +165,6 @@ if __name__ == '__main__':
     # In production, let gunicorn handle the serving
     if os.getenv('RENDER'):
         app.logger.setLevel(logging.INFO)
+        # Don't run the server here - let gunicorn do it
     else:
         socketio.run(app, host='0.0.0.0', port=port, debug=True) 
