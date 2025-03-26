@@ -6,6 +6,11 @@ import numpy as np
 import base64
 import os
 from pathlib import Path
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
@@ -33,7 +38,7 @@ class TrafficLightDetector:
             )
             raise FileNotFoundError(error_msg)
             
-        print(f"Loading model from: {model_path}")
+        logger.info(f"Loading model from: {model_path}")
         self.model = YOLO(str(model_path))
 
     def get_color_for_class(self, class_name):
@@ -48,12 +53,15 @@ class TrafficLightDetector:
 
     def process_frame(self, frame):
         try:
+            logger.debug(f"Processing frame with shape: {frame.shape}")
+            
             # Ensure frame is not too large
             max_size = 640
             h, w = frame.shape[:2]
             if h > max_size or w > max_size:
                 scale = max_size / max(h, w)
                 frame = cv2.resize(frame, None, fx=scale, fy=scale)
+                logger.debug(f"Resized frame to: {frame.shape}")
 
             # Run YOLO detection
             results = self.model(frame, conf=0.25)
@@ -64,6 +72,8 @@ class TrafficLightDetector:
             # Process results
             if results and len(results) > 0:
                 boxes = results[0].boxes
+                logger.debug(f"Found {len(boxes)} detections")
+                
                 for box in boxes:
                     # Get box coordinates
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -72,6 +82,8 @@ class TrafficLightDetector:
                     cls = int(box.cls[0])
                     conf = float(box.conf[0])
                     class_name = results[0].names[cls].lower()
+                    
+                    logger.debug(f"Detection: {class_name} ({conf:.2f}) at [{x1}, {y1}, {x2}, {y2}]")
                     
                     # Get color based on class
                     color = self.get_color_for_class(class_name)
@@ -106,7 +118,7 @@ class TrafficLightDetector:
             
             return processed_frame
         except Exception as e:
-            print(f"Error in process_frame: {str(e)}")
+            logger.error(f"Error in process_frame: {str(e)}", exc_info=True)
             raise
 
 detector = TrafficLightDetector()
@@ -117,7 +129,7 @@ def index():
 
 @socketio.on('connect')
 def handle_connect():
-    print("Client connected")
+    logger.info("Client connected")
 
 @socketio.on('frame')
 def handle_frame(data):
@@ -127,6 +139,11 @@ def handle_frame(data):
         nparr = np.frombuffer(img_data, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
+        logger.debug(f"Received frame with shape: {frame.shape if frame is not None else 'None'}")
+        
+        if frame is None:
+            raise ValueError("Failed to decode frame")
+        
         # Process the frame
         processed_frame = detector.process_frame(frame)
         
@@ -135,12 +152,18 @@ def handle_frame(data):
         encoded_img = base64.b64encode(buffer).decode('utf-8')
         result_data = f'data:image/jpeg;base64,{encoded_img}'
         
+        logger.debug("Frame processed and sent back to client")
+        
         # Send back to client
         emit('detection', result_data)
     except Exception as e:
-        print(f"Error processing frame: {str(e)}")
+        logger.error(f"Error processing frame: {str(e)}", exc_info=True)
         emit('error', {'message': str(e)})
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 8000))
-    socketio.run(app, host='0.0.0.0', port=port, debug=True) 
+    port = int(os.getenv('PORT', 8080))
+    # In production, let gunicorn handle the serving
+    if os.getenv('RENDER'):
+        app.logger.setLevel(logging.INFO)
+    else:
+        socketio.run(app, host='0.0.0.0', port=port, debug=True) 

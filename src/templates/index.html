@@ -243,17 +243,26 @@
                 permissionOverlay.classList.add('hidden');
                 errorMessage.style.display = 'none';
                 
+                // Wait for video to be ready
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        resolve();
+                    };
+                });
+                
                 // Set canvas size to match video
-                video.onloadedmetadata = () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    rawLoading.style.display = 'none';
-                    connectSocket();
-                    startProcessing();
-                };
-            } catch (err) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
                 rawLoading.style.display = 'none';
-                errorMessage.textContent = 'Camera access denied. The application requires camera access to function properly.';
+                
+                // Connect to server and start processing
+                connectSocket();
+                startProcessing();
+            } catch (err) {
+                console.error('Camera error:', err);
+                rawLoading.style.display = 'none';
+                errorMessage.textContent = 'Camera access denied or error occurred. The application requires camera access to function properly.';
                 errorMessage.style.display = 'block';
             }
         }
@@ -281,11 +290,23 @@
                 processedLoading.style.display = 'block';
 
                 try {
-                    // Draw the current video frame to the canvas
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    // Create a temporary canvas for frame capture
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = video.videoWidth;
+                    tempCanvas.height = video.videoHeight;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    
+                    // Draw the current video frame to the temporary canvas
+                    tempCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
                     
                     // Get the frame data
-                    const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                    const imageData = tempCanvas.toDataURL('image/jpeg', 0.7);
+                    
+                    // Update canvas size if needed
+                    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                    }
                     
                     // Send the frame to the server
                     socket.emit('frame', imageData);
@@ -293,6 +314,8 @@
                     console.error('Error processing frame:', error);
                     processedLoading.style.display = 'none';
                     isProcessing = false;
+                    errorMessage.textContent = `Error: ${error.message}`;
+                    errorMessage.style.display = 'block';
                     if (!isPaused) {
                         setTimeout(() => requestAnimationFrame(processFrame), 1000);
                     }

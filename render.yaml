@@ -1,16 +1,12 @@
 services:
   - type: web
-    name: traffic-light-detector
+    name: traffic-light-detection
     env: python
-    buildCommand: |
-      pip install -r requirements.txt
-      mkdir -p src/models
-      cp models/best_traffic_small_yolo.pt src/models/
-    startCommand: gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker --workers 1 --threads 4 --timeout 0 --chdir src server:app
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-class eventlet -w 1 src.server:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
-      - key: PYTHONUNBUFFERED
-        value: "true"
-      - key: CAMERA_INDEX
-        value: 0 
+      - key: PORT
+        value: 8080
+    healthCheckPath: / 
