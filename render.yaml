@@ -7,14 +7,12 @@ services:
       mkdir -p src/models
       cp models/best_traffic_small_yolo.pt src/models/
       ls -la src/models/
-    startCommand: gunicorn --worker-class eventlet -w 1 --timeout 0 --log-level debug --bind 0.0.0.0:10000 "wsgi:app"
+    startCommand: gunicorn --worker-class eventlet -w 1 --threads 1 --timeout 0 --keep-alive 5 --log-level debug --bind 0.0.0.0:$PORT "wsgi:app"
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
       - key: PYTHONPATH
         value: .
-      - key: PORT
-        value: 10000
       - key: RENDER
         value: "true"
       - key: PYTHONUNBUFFERED
